@@ -1,0 +1,416 @@
+# Nginx ~ (pronounced `engine-x`)
+
+♦ Stuff related to Nginx will be uploaded here...
+
+### | Page Index |
+1. [Install Certbot](#https-lets-encrypt-on-hostinger-vps--the-correct-certbot-method)
+2. [Laravel Configuration](#laravel-best-practice-vhost-important)
+3. [Quick config file example for all 4 platforms)](#below-i-have-added-all-4-platform-configurations)
+
+>### here is the link [Nginx guide](https://www.digitalocean.com/community/tutorials/how-to-install-nginx-on-ubuntu-22-04) from where you can install `Nginx` on your system.
+---
+### Steps to config a website on server.
+* #### Create a folder inside `/var/www/html` directory.
+```javascript
+sudo mkdir -p /var/www/html/example
+sudo tee /var/www/html/example/index.php > /dev/null <<'PHP'
+<?php
+phpinfo();
+PHP
+sudo chown -R www-data:www-data /var/www/html/example
+```
+* #### Install PHP-FPM + common extensions.
+```php
+sudo apt update
+sudo apt install -y nginx php8.3-fpm php8.3-cli php8.3-mysql php8.3-curl php8.3-mbstring php8.3-xml php8.3-zip php8.3-gd php8.3-intl
+sudo systemctl enable --now php8.3-fpm nginx
+```
+>Check FPM socket:
+```php
+ls -l /run/php/
+# expect: php8.3-fpm.sock
+```
+* #### Create a nginx config file inside `sites-available` directory.
+```javascript
+sudo nano /etc/nginx/sites-available/example.conf
+```
+>Paste:
+```php
+server {
+    listen 80;
+    listen [::]:80;
+
+    server_name example.com www.example.com;
+
+    root /var/www/html/example;
+    index index.php index.html;
+
+    access_log /var/log/nginx/example.access.log;
+    error_log  /var/log/nginx/example.error.log;
+
+    # Security: don't serve hidden files (.env, .git, etc.)
+    location ~ /\.(?!well-known).* {
+        deny all;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/run/php/php8.3-fpm.sock;
+
+        # Helpful defaults
+        fastcgi_read_timeout 300;
+    }
+
+    # Optional: cache static files
+    location ~* \.(jpg|jpeg|png|gif|css|js|ico|svg|woff2?)$ {
+        expires 30d;
+        access_log off;
+    }
+}
+```
+>Enable it:
+```php
+sudo ln -s /etc/nginx/sites-available/example.conf /etc/nginx/sites-enabled/example.conf
+```
+>Disable the default site (recommended so it doesn’t “catch” your domain):
+```php
+sudo rm -f /etc/nginx/sites-enabled/default
+```
+>Test + reload:
+```php
+sudo nginx -t && sudo systemctl reload nginx
+```
+>Now open: http://example.com (phpinfo should show).
+---
+### HTTPS (`Let’s Encrypt`) on Hostinger VPS — the correct `Certbot` method
+
+* #### Install dependencies
+```php
+sudo apt update
+sudo apt -y install python3 python3-venv libaugeas0
+```
+* #### Install Certbot for Nginx
+```php
+sudo python3 -m venv /opt/certbot
+sudo /opt/certbot/bin/pip install --upgrade pip
+sudo /opt/certbot/bin/pip install certbot certbot-nginx
+sudo ln -s /opt/certbot/bin/certbot /usr/bin/certbot
+```
+### Add `SSL` with `Certbot` (when DNS is correct)
+```php
+sudo certbot --nginx -d example.com -d www.example.com
+```
+>And verify:
+```php
+sudo certbot renew --dry-run
+```
+
+## Laravel best-practice vhost (important)
+* Laravel must point to `/public`.
+* Config:
+```php
+server {
+    listen 80;
+    listen [::]:80;
+
+    server_name myapp.com www.myapp.com;
+
+    root /var/www/html/myapp/public;
+    index index.php;
+
+    access_log /var/log/nginx/myapp.access.log;
+    error_log  /var/log/nginx/myapp.error.log;
+
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/run/php/php8.3-fpm.sock;
+        fastcgi_read_timeout 300;
+    }
+
+    location ~ /\.(?!well-known).* {
+        deny all;
+    }
+}
+```
+## PHP settings you’ll actually change (correct way)
+
+### A) CLI vs FPM configs are different
+* #### CLI config:
+```php
+php -i | grep "Loaded Configuration File"
+```
+* #### FPM config:
+```php
+php-fpm8.3 -i | grep "Loaded Configuration File" || true
+```
+>Most common file:
+* #### `/etc/php/8.3/fpm/php.ini`
+```php
+sudo nano /etc/php/8.3/fpm/php.ini
+```
+* ### Typical values:
+  * `memory_limit = 512M`
+  * `upload_max_filesize = 64M`
+  * `post_max_size = 64M`
+  * `max_execution_time = 300`
+```php
+sudo systemctl restart php8.3-fpm
+```
+## Permissions: simple rules that prevent pain
+### Recommended ownership
+* code: owned by your deploy user
+* runtime dirs (cache/logs/uploads): writable by www-data
+>Example:
+```php
+sudo chown -R deploy:deploy /var/www/html/myapp
+sudo find /var/www/html/myapp -type d -exec chmod 755 {} \;
+sudo find /var/www/html/myapp -type f -exec chmod 644 {} \;
+```
+>Laravel writable dirs:
+```php
+sudo chown -R www-data:www-data /var/www/html/myapp/storage /var/www/html/myapp/bootstrap/cache
+```
+>WordPress writable dirs:
+```php
+sudo chown -R www-data:www-data /var/www/html/wp/wp-content/uploads
+```
+## Debugging workflow (the commands you’ll use daily)
+>Nginx config test
+```php
+sudo nginx -t
+```
+>Logs
+```php
+tail -n 200 /var/log/nginx/error.log
+tail -n 200 /var/log/nginx/example.error.log
+```
+>PHP-FPM status
+```php
+systemctl status php8.3-fpm --no-pager
+```
+>Find the active vhost handling a domain
+```php
+grep -R "server_name example.com" -n /etc/nginx/sites-enabled/
+```
+>Check which socket PHP is using
+```php
+grep -R "listen =" -n /etc/php/8.3/fpm/pool.d/www.conf
+ls -l /run/php/
+```
+---
+### Below I have added all `4` platform configurations,
+* `WordPress`
+* `Laravel`
+* `Custom PHP`
+* `Magento 2`
+### so it will be easy to just copy paste and do some changes, else deep info is above that I hope you have read already.
+
+## 1) `WordPress` (in /var/www/html/wp-site/)
+>Assume WordPress is installed directly inside:
+* `/var/www/html/wp-site/wp-config.php`
+* `/var/www/html/wp-site/index.php`
+
+>/etc/nginx/sites-available/wp-site.conf:
+```php
+server {
+    listen 80;
+    listen [::]:80;
+    server_name example.com www.example.com;
+
+    root /var/www/html/wp-site;
+    index index.php index.html;
+
+    access_log /var/log/nginx/wp-site.access.log;
+    error_log  /var/log/nginx/wp-site.error.log;
+
+    # Allow Let's Encrypt HTTP challenge
+    location ^~ /.well-known/acme-challenge/ { allow all; }
+
+    # Security: block hidden files except .well-known
+    location ~ /\.(?!well-known).* { deny all; }
+
+    # Main WP routing
+    location / {
+        try_files $uri $uri/ /index.php?$args;
+    }
+
+    # PHP handling
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/run/php/php8.3-fpm.sock;
+        fastcgi_read_timeout 300;
+
+        # If you get "upstream sent too big header"
+        fastcgi_buffers 16 16k;
+        fastcgi_buffer_size 32k;
+    }
+
+    # Cache static files
+    location ~* \.(jpg|jpeg|png|gif|css|js|ico|svg|woff2?)$ {
+        expires 30d;
+        access_log off;
+    }
+
+    # Optional: deny xmlrpc if you don't use it
+    # location = /xmlrpc.php { deny all; }
+}
+```
+## 2) `Laravel` (in /var/www/html/laravel-app/, `root must be /public`)
+>Assume:
+* `/var/www/html/laravel-app/public/index.php`
+
+>/etc/nginx/sites-available/laravel-app.conf:
+```php
+server {
+    listen 80;
+    listen [::]:80;
+    server_name example.com www.example.com;
+
+    root /var/www/html/laravel-app/public;
+    index index.php;
+
+    access_log /var/log/nginx/laravel.access.log;
+    error_log  /var/log/nginx/laravel.error.log;
+
+    location ^~ /.well-known/acme-challenge/ { allow all; }
+    location ~ /\.(?!well-known).* { deny all; }
+
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/run/php/php8.3-fpm.sock;
+        fastcgi_read_timeout 300;
+    }
+
+    location ~* \.(jpg|jpeg|png|gif|css|js|ico|svg|woff2?)$ {
+        expires 30d;
+        access_log off;
+    }
+}
+```
+>Laravel permissions tip
+```php
+sudo chown -R www-data:www-data /var/www/html/laravel-app/storage /var/www/html/laravel-app/bootstrap/cache
+```
+## 3) Custom PHP (Front Controller) – “everything goes to index.php”
+Use this for your own MVC/framework-less apps, APIs, etc.
+>Assume:
+* `/var/www/html/custom-app/public/index.php`
+* `You want public/ as docroot`
+
+>/etc/nginx/sites-available/custom-app.conf:
+```php
+server {
+    listen 80;
+    listen [::]:80;
+    server_name example.com www.example.com;
+
+    root /var/www/html/custom-app/public;
+    index index.php index.html;
+
+    access_log /var/log/nginx/custom-app.access.log;
+    error_log  /var/log/nginx/custom-app.error.log;
+
+    location ^~ /.well-known/acme-challenge/ { allow all; }
+    location ~ /\.(?!well-known).* { deny all; }
+
+    # Front controller routing
+    location / {
+        try_files $uri $uri/ /index.php?$query_string;
+    }
+
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/run/php/php8.3-fpm.sock;
+        fastcgi_read_timeout 300;
+    }
+
+    location ~* \.(jpg|jpeg|png|gif|css|js|ico|svg|woff2?)$ {
+        expires 30d;
+        access_log off;
+    }
+}
+```
+## 4) `Magento 2` (production-safe baseline)
+Magento has special needs for /pub, static/media, and blocking sensitive paths.
+>Assume Magento is here:
+* `/var/www/html/magento/`
+* `Magento entrypoint is:`
+  * /var/www/html/magento/pub/index.php So Nginx root should be:
+* `/var/www/html/magento/pub`
+
+>/etc/nginx/sites-available/magento.conf:
+```php
+server {
+    listen 80;
+    listen [::]:80;
+    server_name example.com www.example.com;
+
+    set $MAGE_ROOT /var/www/html/magento;
+    root $MAGE_ROOT/pub;
+    index index.php;
+
+    access_log /var/log/nginx/magento.access.log;
+    error_log  /var/log/nginx/magento.error.log;
+
+    location ^~ /.well-known/acme-challenge/ { allow all; }
+    location ~ /\.(?!well-known).* { deny all; }
+
+    # Protect sensitive files
+    location ~* /(app|bin|dev|lib|phpserver|setup|var|vendor)/ { deny all; }
+    location ~* /(.user.ini|composer.json|composer.lock|gruntfile.js|package.json|package-lock.json|yarn.lock) { deny all; }
+
+    # Main Magento routing
+    location / {
+        try_files $uri $uri/ /index.php?$args;
+    }
+
+    # PHP
+    location ~ \.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/run/php/php8.3-fpm.sock;
+
+        fastcgi_read_timeout 600;
+
+        # Common Magento needs
+        fastcgi_buffers 16 16k;
+        fastcgi_buffer_size 32k;
+    }
+
+    # Cache static assets aggressively
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|webp|woff2?)$ {
+        expires 1y;
+        access_log off;
+        add_header Cache-Control "public";
+        try_files $uri =404;
+    }
+
+    # Media - allow but don’t execute PHP in media
+    location /media/ {
+        try_files $uri $uri/ /get.php?$args;
+        location ~* \.php$ { deny all; }
+    }
+
+    # Static - in production these are files
+    location /static/ {
+        try_files $uri $uri/ /static.php?$args;
+    }
+}
+```
+>Magento permissions (quick rule of thumb)
+* keep code owned by your deploy user
+* give writable dirs to www-data:
+```php
+sudo chown -R www-data:www-data /var/www/html/magento/var /var/www/html/magento/generated /var/www/html/magento/pub/static /var/www/html/magento/pub/media
+```
